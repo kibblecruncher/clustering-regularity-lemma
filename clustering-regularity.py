@@ -37,6 +37,11 @@ class LinkGraph:
         self.deg_A = self.L.sum(axis=1)
         self.deg_B = self.L.sum(axis=0)
 
+        intersection_counts = self.L @ (self.L).T
+        local_deviation = intersection_counts - (self.gamma ** 2) * self.B_mask.sum()
+        np.fill_diagonal(local_deviation, 0)
+        self.total_deviation = local_deviation.sum()
+
     def compute_irregular_vertices(self):
         # number of vertices in U whose degree deviates from expected by > epsilon
         expected_deg = self.gamma * self.B_mask.sum()
@@ -47,3 +52,15 @@ class LinkGraph:
         local_deviation = intersection_counts - (self.gamma ** 2) * self.B_mask.sum()
         np.fill_diagonal(local_deviation, 0)
         return local_deviation.sum()
+
+    def deviation_set(self, delta):
+        
+
+class Manager:
+    # TODO local direction trees
+    # TODO direction queue
+    # TODO def read(): str -> Maybe(Link)
+    # TODO def write: L -> File (named vtx_directions)
+    # TODO 
+
+    def 
