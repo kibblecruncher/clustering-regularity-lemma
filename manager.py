@@ -1,3 +1,4 @@
+from importlib.resources import path
 from unicodedata import name
 import json
 import os
@@ -14,22 +15,28 @@ class FileManager(object):
         os.makedirs(graph_dir, exist_ok=True)
         self.graph_dir = graph_dir
 
-    def partitionFileName(self, vertex:int, direction:str, step:str)->str:
+    def partitionFileName(self, vertex:int, direction:str)->str:
         """Generates a file name for the given vertex, direction, and step."""
-        return os.path.join(self.target_dir, f"partition_{vertex}_{direction}_{step}.json")
+        return os.path.join(self.target_dir, f"partition_{vertex}_{direction}.json")
 
-    def savePartition(self, vertex:int,direction:str,step:str, A:np.array, B:np.array)->None:
+    def savePartition(self, vertex:int,direction:str, A:np.array, B:np.array)->None:
         """Saves the two partitions to disk."""
-        j = json.dumps({"vtx":vertex,"dir":direction,"step":step,"A":A.tolist(),"B":B.tolist()})
-        with open(self.partitionFileName(vertex, direction, step), "w", encoding="utf-8") as f:            
+        j = json.dumps({"vtx":vertex,"dir":direction,"A":A.tolist(),"B":B.tolist()})
+        with open(self.partitionFileName(vertex, direction), "w", encoding="utf-8") as f:            
             f.write(j)
 
     
-    def loadPartition(self, vertex:int, direction:str, step:str)->dict:
-        """Loads a partition from disk."""
-        with open(self.partitionFileName(vertex, direction, step), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data
+    def loadPartition(self, vertex:int, direction:str)->tuple[bool, dict]:
+        """Loads the partition from disk."""
+        try:
+            with open(self.partitionFileName(vertex, direction), "r", encoding="utf-8") as f:
+                data = f.read()  # or json.load(f), whatever format you need
+        except OSError:
+            return False, None
+        else:
+            return True, data
+    
+
     
     def graphFileName(self, vertex:int)->str:
         """Generates a file name for the given vertex."""
@@ -45,10 +52,14 @@ class FileManager(object):
     def loadLinkGraph(self, v:int)->nx.Graph:
         """Loads the link graph from disk."""
         file_path = self.graphFileName(v)
-        # Load the JSON data from the file
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return nx.node_link_graph(data)
+        try:
+            # Load the JSON data from the file
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except OSError:
+            return False, None
+        else:
+            return True, nx.node_link_graph(data)
 
 
 class GraphManager(object):
@@ -90,6 +101,8 @@ class GraphManager(object):
         return A, B
 
 
+
+
     
 
 
@@ -103,29 +116,39 @@ class Manager(object):
 
 
         #make and save the link graphs and partitions for all vertices in V2
-        V2 = self.graph_manager.getV2()
-        for v in V2:
+        self.V2 = self.graph_manager.getV2()
+        for v in self.V2:
             A, B = self.graph_manager.makeLinkPartition(v)
-            self.partition_manager.savePartition(v, "", "", A, B)
+            self.partition_manager.savePartition(v, "", A, B)
             N = self.graph_manager.makeLinkGraph(v)
             self.partition_manager.saveLinkGraph(v, N)
 
 
-    
+    def launchThread(self, link:nx.Graph, partition:tuple[np.array, np.array], v:int, dir:str)->None:
+        raise NotImplementedError
 
     def iterate(self):
         """Main loop of the algorithm. Iteratively updates the partition until convergence."""
 
         #initialize matrix and partition
         while q.not_empty():
-            pLabel = q.get()
+            dir = q.get()
 
-            for v in self.G.nodes():
+            relevantVertices = np.array([False] * len(self.V2)) #mask of vertices in V2 that we will update this step
+            for i, v in enumerate(self.V2):
                 #load file for vertex v and partition labeled pLabel
-                #if loading fails, skip vertex
-                #if succeed, store this vertex in relevantVertices
+                link = self.partition_manager.loadLinkGraph(v)
+                success,partition = self.partition_manager.loadPartition(v, dir)
+                if not success:
+                    #if loading fails, skip vertex
+                    continue
 
-            #for v in relevantVertices:
+                #if succeed, store this vertex in relevantVertices
+                relevantVertices[i] = True
+                self.launchThread(link, partition, v, dir) #launch a thread to compute the deviation, irregularity, split type, and new partitions for this vertex
+
+
+            for v in relevantVertices:
                 #compute deviation, irregularity, split type, and new partitions
                 #record deviation, irregularity, and split type for this vertex
 
