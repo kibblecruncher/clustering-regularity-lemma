@@ -1,66 +1,65 @@
 #!/usr/bin/env python3
 from scipy.sparse import csr_matrix # depending on graphs used i suppose
+import networkx as nx
 import numpy as np
 
-class TripartiteBlowup:
-    # sorry if this notation sucks, i feel uneasy working with an adjacency matrix G
-    # assume M is int64
-    def __init__(self, M, eps=0.0625):
-        self.M = M
-        self.n = M.shape[0]
-
-        # triangle count in tripartite blowup
-        self.triangle_count = int(np.trace(M @ M @ M) )
-
-        degrees = M.sum(axis=1)
-        self.path_count = int(np.sum(degrees ** 2))
-
-        clustering_coefficient = 0.0 if self.path_count == 0 else self.triangle_count / self.path_count
-        self.gamma = clustering_coefficient
+class Task:
+    def __init__(self, link, partition, eps: float):
+        self.link = self.G = link
+        self.A, self.B = partition
         self.eps = eps
 
-class LinkGraph:
-    def __init__(self, H, v, A_mask, B_mask):
-        self.H = H
-        self.v = v
-        self.A_mask = A_mask
-        self.B_mask = B_mask
-        self.L = (H.M)[A_mask][:, B_mask]
+        self.M = bipartite.biadjacency_matrix(
+            self.G,
+            row_order=self.A,
+            column_order=self.B
+        )
 
-        # for convenience
-        self.gamma = H.gamma
-        self.eps = H.eps
+        self.edges = self.G.number_of_edges()
 
-        # mostly sanity checks
-        self.edges = self.L.sum()
-        self.density = 0.0 if self.edges == 0 else self.edges / (A_mask.sum() * B_mask.sum())
-        self.deg_A = self.L.sum(axis=1)
-        self.deg_B = self.L.sum(axis=0)
+        self.density = 0.0 if len(self.A) * len(self.B) == 0 else (
+            self.edges / (len(self.A) * len(self.B))
+        )
 
-        intersection_counts = self.L @ (self.L).T
-        local_deviation = intersection_counts - (self.gamma ** 2) * self.B_mask.sum()
-        np.fill_diagonal(local_deviation, 0)
-        self.total_deviation = local_deviation.sum()
+        self.deg_A_v = np.array(self.M.sum(axis=1)).ravel()
+        self.deg_B_v = np.array(self.M.sum(axis=0)).ravel()
+        self.pathweight = deg_A_v * deg_B_v
 
-    def compute_irregular_vertices(self):
-        # number of vertices in U whose degree deviates from expected by > epsilon
-        expected_deg = self.gamma * self.B_mask.sum()
-        return np.sum(np.abs(self.deg_A - expected_deg) > self.eps)
+        self.deg_N_A = self.L.sum(axis=1) # degrees of N_A(v)
+        self.deg_N_B = self.L.sum(axis=0) # degrees of N_B(v)
 
-    def compute_deviation(self):
-        intersection_counts = self.L @ (self.L).T
-        local_deviation = intersection_counts - (self.gamma ** 2) * self.B_mask.sum()
-        np.fill_diagonal(local_deviation, 0)
-        return local_deviation.sum()
+    def compute_local_deviation(self, gamma):
+        spec = self.M @ self.M.T - (gamma**2) * self.deg_B_v
+        self.spec_dev_matrix = spec
+        return np.sum(spec)
 
-    def deviation_set(self, delta):
+    def compute_irregular_vertices(self, gamma):
+        expected = gamma * self.deg_B_v
+
+        delta_1 = self.eps**5 / 90
+
+        positive = (self.deg_A_v - expected) > delta_1 * self.deg_B_v
+        negative = (self.deg_A_v - expected) < -delta_1 * self.deg_B_v
+
+        if np.sum(positive) > np.sum(negative):
+            return positive, np.sum(positive)
+        else:
+            return negative, np.sum(negative)
+
+    def produce_new_masks(self, gamma):
+        self.local_dev = self.compute_local_deviation(gamma)
+        self.big_irreg_set, self.total_irreg = self.compute_irregular_vertices(gamma)
+
+        delta = self.eps
+
+        U_v = np.abs(self.deg_A_v - gamma * self.deg_B_v) > delta
+        scores = self.spec_dev_matrix @ U_v.astype(int)
+        u_star = np.argmax(scores)
+
+        row = np.asarray(self.spec_dev_matrix[u_star, :]).ravel()
+        L_v = row > delta
+
+        mask_B = (self.M[u_star, :].toarray().ravel() > 0).astype(int)
+
+        return (self.A, self.B), (self.big_irreg_set, self.B), (L_v, mask_B)
         
-
-class Manager:
-    # TODO local direction trees
-    # TODO direction queue
-    # TODO def read(): str -> Maybe(Link)
-    # TODO def write: L -> File (named vtx_directions)
-    # TODO 
-
-    def 
