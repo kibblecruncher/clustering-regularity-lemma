@@ -23,9 +23,54 @@ class FileManager(object):
         """Generates a file name for the given vertex, direction, and step."""
         return os.path.join(self.target_dir, f"partition_{vertex}_{direction}.json")
 
-    def savePartition(self, vertex:int,direction:str, A:np.array, B:np.array)->None:
-        """Saves the two partitions to disk."""
-        j = json.dumps({"vtx":vertex,"dir":direction,"A":A.tolist(),"B":B.tolist()})
+    def savePartition(self, vertex:int, direction:str, mask_A:np.array, mask_B:np.array, 
+                       neighbors_A:List=None, neighbors_B:List=None)->None:
+        """Saves the partition with bitmasks and neighbor identifiers to disk.
+        
+        Args:
+            vertex: The vertex index in V2
+            direction: The direction string
+            mask_A: Bitmask over neighbors in part 0 (V1)
+            mask_B: Bitmask over neighbors in part 2 (V3)
+            neighbors_A: The actual neighbor nodes in part 0 (optional, for legacy compatibility)
+            neighbors_B: The actual neighbor nodes in part 2 (optional, for legacy compatibility)
+        """
+        # Convert bitmasks to Python lists (ensure numpy types are converted to native Python types)
+        try:
+            mask_A_arr = np.asarray(mask_A, dtype=bool)
+            mask_B_arr = np.asarray(mask_B, dtype=bool)
+            mask_A_list = [int(x) for x in mask_A_arr]  # Convert to int (0 or 1) for JSON compatibility
+            mask_B_list = [int(x) for x in mask_B_arr]
+        except Exception:
+            # Fallback if anything goes wrong
+            mask_A_list = mask_A.tolist() if hasattr(mask_A, 'tolist') else list(mask_A)
+            mask_B_list = mask_B.tolist() if hasattr(mask_B, 'tolist') else list(mask_B)
+        
+        # Convert neighbors to lists for JSON serialization
+        # Handle both lists and numpy arrays properly
+        if neighbors_A is not None:
+            if isinstance(neighbors_A, np.ndarray):
+                neighbors_A = neighbors_A.tolist()  # Convert numpy array to list first
+            neighbors_A_list = [list(n) if isinstance(n, tuple) else n for n in neighbors_A]
+        else:
+            neighbors_A_list = None
+            
+        if neighbors_B is not None:
+            if isinstance(neighbors_B, np.ndarray):
+                neighbors_B = neighbors_B.tolist()  # Convert numpy array to list first
+            neighbors_B_list = [list(n) if isinstance(n, tuple) else n for n in neighbors_B]
+        else:
+            neighbors_B_list = None
+        
+        data = {
+            "vtx": vertex,
+            "dir": direction,
+            "mask_A": mask_A_list,
+            "mask_B": mask_B_list,
+            "neighbors_A": neighbors_A_list,
+            "neighbors_B": neighbors_B_list
+        }
+        j = json.dumps(data)
         with open(self.partitionFileName(vertex, direction), "w", encoding="utf-8") as f:            
             f.write(j)
 
@@ -128,15 +173,101 @@ class GraphManager(object):
         N = self.H.subgraph(neighbors).copy()
         return {n: i for i, n in enumerate(N.nodes())}
     
-    def makeLinkPartition(self, vertex:int)->Tuple[np.ndarray, np.ndarray]:
+    def makeLinkPartition(self, vertex:int)->Tuple[List, List]:
         """Generates the link partition of the given vertex."""
         N = self.makeLinkGraph(vertex)
-        A = np.array([n for n, d in N.nodes(data=True) if d.get("part") == 0])
-        B = np.array([n for n, d in N.nodes(data=True) if d.get("part") == 2])
+        A = [n for n, d in N.nodes(data=True) if d.get("part") == 0]
+        B = [n for n, d in N.nodes(data=True) if d.get("part") == 2]
         return A, B
 
 
 class Manager(object):
+
+    @staticmethod
+    def _convert_json_to_nodes(json_list: List) -> List:
+        """Convert JSON lists back to tuples for node references (e.g., from JSON serialization)."""
+        result = []
+        for item in json_list:
+            if isinstance(item, list):
+                # Convert list to tuple for node references
+                result.append(tuple(item))
+            else:
+                result.append(item)
+        return result
+    
+    def _get_edge_lists(self) -> Tuple[List[Tuple], List[Tuple]]:
+        """Get all E12 and E23 edges from the tripartite graph, sorted consistently.
+        
+        Returns:
+            (E12_edges, E23_edges) - Lists of edges from part 0-1 and 1-2 respectively
+        """
+        H = self.graph_manager.H
+        E12_edges = []
+        E23_edges = []
+        
+        for u, v in H.edges():
+            u_part = H.nodes[u]['part']
+            v_part = H.nodes[v]['part']
+            
+            # Normalize edge direction (smaller part first)
+            if u_part > v_part:
+                u, v, u_part, v_part = v, u, v_part, u_part
+            
+            if u_part == 0 and v_part == 1:
+                E12_edges.append((u, v))
+            elif u_part == 1 and v_part == 2:
+                E23_edges.append((u, v))
+        
+        # Sort for consistency
+        E12_edges.sort()
+        E23_edges.sort()
+        return E12_edges, E23_edges
+    
+    def _map_vertex_partition_to_edges(self, v: int, mask_A: np.ndarray, mask_B: np.ndarray,
+                                       neighbors_A: List, neighbors_B: List) -> Tuple[np.ndarray, np.ndarray]:
+        """Map a vertex's local partition to contributions to global E12 and E23 edge partitions.
+        
+        Args:
+            v: The vertex index in V2
+            mask_A: Bitmask indicating which A-neighbors are marked
+            mask_B: Bitmask indicating which B-neighbors are marked
+            neighbors_A: List of neighbor nodes in part 0
+            neighbors_B: List of neighbor nodes in part 2
+        
+        Returns:
+            (E12_contribution, E23_contribution) - Boolean arrays indicating marked edges
+        """
+        E12_edges, E23_edges = self._get_edge_lists()
+        
+        # Create sets for fast lookup
+        E12_set = {e: i for i, e in enumerate(E12_edges)}
+        E23_set = {e: i for i, e in enumerate(E23_edges)}
+        
+        E12_contrib = np.zeros(len(E12_edges), dtype=bool)
+        E23_contrib = np.zeros(len(E23_edges), dtype=bool)
+        
+        v_node = (v, 1)  # The vertex in part 1 (V2)
+        
+        # For each marked A-neighbor, mark the corresponding E12 edge
+        for idx, neighbor_A in enumerate(neighbors_A):
+            if mask_A[idx]:
+                # Edge from part 0 to part 1
+                edge = (neighbor_A, v_node)
+                if edge in E12_set:
+                    E12_contrib[E12_set[edge]] = True
+        
+        # For each marked B-neighbor, mark the corresponding E23 edge
+        for idx, neighbor_B in enumerate(neighbors_B):
+            if mask_B[idx]:
+                # Edge from part 1 to part 2
+                edge = (v_node, neighbor_B)
+                if edge in E23_set:
+                    E23_contrib[E23_set[edge]] = True
+        
+        return E12_contrib, E23_contrib
+
+
+
     def __init__(self, 
                  G:nx.Graph,
                  eps:float,
@@ -148,6 +279,21 @@ class Manager(object):
                  clustering_threshold:float,
                  max_depth:int=float('inf')
                 ) -> None:
+        """Initializes the manager with the given graph and parameters.
+            Standard hyperparameters for the algorithm include:
+            eps < 1/16 : parameter for the clustering task, which determines the approximation quality
+           
+            irreg_vtx_threshold <= eps**5/90: threshold for local irregularity of a vertex within a link graph
+            irreg_vtx_count_threshold <= eps**(5/2)/9: threshold for the number of irregular vertices at a vertex
+            
+            irreg_threshold  <= 2*eps**(5/2)/5: threshold for the total irregularity weight of a partition
+            
+            dev_vtx_threshold  <= eps**2/9 : threshold for local deviation of a vertex
+            dev_threshold <= 2*eps**2/5 : threshold for the total deviation weight of a partition
+            
+            clustering_threshold <= eps : threshold for smallest allowed clustering coefficient of a partition
+        
+        """
         #initialize the graph manager and file manager, and compute the initial partitions and link graphs for all vertices in V2
         self.graph_manager = GraphManager(G)
         self.partition_manager = FileManager("partitions", "graphs")
@@ -169,7 +315,10 @@ class Manager(object):
         self.V2 = self.graph_manager.getV2()
         for v in self.V2:
             A, B = self.graph_manager.makeLinkPartition(v)
-            self.partition_manager.savePartition(v, "", A, B)
+            # Initial partitions: mark all neighbors as in partition class 0
+            mask_A = np.ones(len(A), dtype=bool)
+            mask_B = np.ones(len(B), dtype=bool)
+            self.partition_manager.savePartition(v, "", mask_A, mask_B, A, B)
             N = self.graph_manager.makeLinkGraph(v)
             self.partition_manager.saveLinkGraph(v, N)
 
@@ -201,21 +350,39 @@ class Manager(object):
         return (self.partition_labels_A, self.partition_labels_B)
 
     def assemble_partition(self, dir:str)->Tuple[np.ndarray, np.ndarray]:
-        """Assembles the partition for all vertices in V2 for the given direction."""
-        part_A_iter = []
-        part_B_iter = []
+        """Assembles the global edge partitions for all vertices in V2 for the given direction.
+        
+        Maps local vertex partitions (bitmasks over neighbors) to global edge partitions
+        (bitmasks over E12 and E23 edges in the tripartite graph).
+        """
+        E12_edges, E23_edges = self._get_edge_lists()
+        
+        E12_partition = np.zeros(len(E12_edges), dtype=bool)
+        E23_partition = np.zeros(len(E23_edges), dtype=bool)
+        
         for v in self.V2:
             success, partition_str = self.partition_manager.loadPartition(v, dir)
-            if success:
-                partition_dict = json.loads(partition_str)
-                A = np.array(partition_dict["A"])
-                B = np.array(partition_dict["B"])
-                part_A_iter.append(A)
-                part_B_iter.append(B)
-
-        part_A = np.concatenate(part_A_iter)
-        part_B = np.concatenate(part_B_iter)
-        return part_A, part_B
+            if not success:
+                continue
+                
+            partition_dict = json.loads(partition_str)
+            
+            # Load bitmasks
+            mask_A = np.array(partition_dict["mask_A"], dtype=bool)
+            mask_B = np.array(partition_dict["mask_B"], dtype=bool)
+            
+            # Load neighbor identifiers, converting JSON lists to tuples
+            neighbors_A = self._convert_json_to_nodes(partition_dict["neighbors_A"])
+            neighbors_B = self._convert_json_to_nodes(partition_dict["neighbors_B"])
+            
+            # Map this vertex's partition to edge contributions
+            E12_contrib, E23_contrib = self._map_vertex_partition_to_edges(v, mask_A, mask_B, neighbors_A, neighbors_B)
+            
+            # Combine with global partition (OR operation)
+            E12_partition |= E12_contrib
+            E23_partition |= E23_contrib
+        
+        return E12_partition, E23_partition
     
     def partitionLabels(self,bitmasks:List[np.ndarray]) -> np.ndarray:
         num_indices = bitmasks[0].shape[0]
@@ -235,15 +402,15 @@ class Manager(object):
         pathweight = 0
         triangle_count = 0
         for v in self.V2:
-            link = self.partition_manager.loadLinkGraph(v)
-            success,partition = self.partition_manager.loadPartition(v, dir)
-            if not success:
+            success, link = self.partition_manager.loadLinkGraph(v)
+            success_p, partition = self.partition_manager.loadPartition(v, dir)
+            if not success or not success_p:
                 #if loading fails, skip vertex
                 continue
             # Parse the JSON partition string into A, B arrays
             partition_dict = json.loads(partition)
-            A = np.array(partition_dict["A"])
-            B = np.array(partition_dict["B"])
+            A = self._convert_json_to_nodes(partition_dict["neighbors_A"])  # Convert lists back to tuples
+            B = self._convert_json_to_nodes(partition_dict["neighbors_B"])  # Convert lists back to tuples
             task = Task(link, (A, B), self.eps)
             pathweight += task.pathweight
             triangle_count += task.edges
@@ -263,10 +430,14 @@ class Manager(object):
 
         #final output list of good directions
         out = []
+        
+        #track all directions considered for logging
+        self.directions_considered = []
 
         #initialize matrix and partition
         while not self.q.empty():
             dir = self.q.get() #get the next direction from the queue
+            self.directions_considered.append(dir)
             
             #check if direction code depth exceeds maximum
             if self.compute_direction_code_length(dir) > self.max_depth:
@@ -290,16 +461,16 @@ class Manager(object):
             irreg_vertices = np.array([False] * len(self.V2)) #mask of vertices in V2 that we will update this step
             for i, v in enumerate(self.V2):
                 #load file for vertex v and partition labeled pLabel
-                link = self.partition_manager.loadLinkGraph(v)
-                success,partition = self.partition_manager.loadPartition(v, dir)
-                if not success:
+                success_g, link = self.partition_manager.loadLinkGraph(v)
+                success_p,partition = self.partition_manager.loadPartition(v, dir)
+                if not success_g or not success_p:
                     #if loading fails, skip vertex
                     continue
 
                 #if succeed, compute the irregular vertices and deviation for this vertex and partition
                 partition_dict = json.loads(partition)
-                A = np.array(partition_dict["A"])
-                B = np.array(partition_dict["B"])
+                A = self._convert_json_to_nodes(partition_dict["neighbors_A"])  # Convert lists back to tuples
+                B = self._convert_json_to_nodes(partition_dict["neighbors_B"])  # Convert lists back to tuples
 
                 task = Task(link, (A, B), self.eps)
                 irreg_v, irreg_count = task.compute_irregular_vertices(gamma)
@@ -321,15 +492,18 @@ class Manager(object):
                 for i, v in enumerate(self.V2):
                     
                     if irreg_vertices[i]:
-                        link = self.partition_manager.loadLinkGraph(v)
-                        success,partition = self.partition_manager.loadPartition(v, dir)
-                        if not success:
+                        success_g, link = self.partition_manager.loadLinkGraph(v)
+                        success_p,partition_str = self.partition_manager.loadPartition(v, dir)
+                        if not success_g or not success_p:
                             #if loading fails, throw an error, since this should not happen
                             raise ValueError(f"Failed to load partition for vertex {v} and direction {dir} when setting irregularity partition")
-                        task2 = Task(link, partition, self.eps)
+                        partition_dict = json.loads(partition_str)
+                        A = self._convert_json_to_nodes(partition_dict["neighbors_A"])  # Convert lists back to tuples
+                        B = self._convert_json_to_nodes(partition_dict["neighbors_B"])  # Convert lists back to tuples
+                        task2 = Task(link, (A, B), self.eps)
                         irreg_v, irreg_count = task2.compute_irregular_vertices(gamma)
-                        self.partition_manager.savePartition(v, dir + "i0", irreg_v, task2.B) #save
-                        self.partition_manager.savePartition(v, dir + "i1", ~irreg_v, task2.B) #save
+                        self.partition_manager.savePartition(v, dir + "i0", np.array(irreg_v), np.ones(len(B), dtype=bool), A, B) #save
+                        self.partition_manager.savePartition(v, dir + "i1", ~np.array(irreg_v), np.ones(len(B), dtype=bool), A, B) #save
                         self.partition_manager.deletePartition(v, dir) #delete old partition to save space
                 
             elif dev_weight > self.dev_threshold * pathweight:
@@ -340,17 +514,20 @@ class Manager(object):
                  self.q.put(dir + "d3")
                  for i, v in enumerate(self.V2):
                     if dev_vertices[i]:
-                        link = self.partition_manager.loadLinkGraph(v)
-                        success,partition = self.partition_manager.loadPartition(v, dir)
-                        if not success:
+                        success_g, link = self.partition_manager.loadLinkGraph(v)
+                        success_p,partition_str = self.partition_manager.loadPartition(v, dir)
+                        if not success_g or not success_p:
                             #if loading fails, throw an error, since this should not happen
                             raise ValueError(f"Failed to load partition for vertex {v} and direction {dir} when setting deviation partition")
-                        task3 = Task(link, partition, self.eps)
+                        partition_dict = json.loads(partition_str)
+                        A = self._convert_json_to_nodes(partition_dict["neighbors_A"])  # Convert lists back to tuples
+                        B = self._convert_json_to_nodes(partition_dict["neighbors_B"])  # Convert lists back to tuples
+                        task3 = Task(link, (A, B), self.eps)
                         L,R = task3.produce_new_masks(gamma)
-                        self.partition_manager.savePartition(v, dir + "d0", L, R) #save
-                        self.partition_manager.savePartition(v, dir + "d1", ~L, R) #save
-                        self.partition_manager.savePartition(v, dir + "d2", L, ~R) #save
-                        self.partition_manager.savePartition(v, dir + "d3", ~L, ~R) #save
+                        self.partition_manager.savePartition(v, dir + "d0", np.array(L), np.array(R), A, B) #save
+                        self.partition_manager.savePartition(v, dir + "d1", ~np.array(L), np.array(R), A, B) #save
+                        self.partition_manager.savePartition(v, dir + "d2", np.array(L), ~np.array(R), A, B) #save
+                        self.partition_manager.savePartition(v, dir + "d3", ~np.array(L), ~np.array(R), A, B) #save
                         self.partition_manager.deletePartition(v, dir) #delete old partition to save space
             else:
                 #if we are not in a problem step, save the partition in the output list
