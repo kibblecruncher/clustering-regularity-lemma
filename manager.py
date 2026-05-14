@@ -46,6 +46,11 @@ class FileManager(object):
             mask_A_list = mask_A.tolist() if hasattr(mask_A, 'tolist') else list(mask_A)
             mask_B_list = mask_B.tolist() if hasattr(mask_B, 'tolist') else list(mask_B)
         
+        #if mask_A or mask_B are all False, we do not need to save anything
+        if not np.any(mask_A) and not np.any(mask_B):
+            return
+
+
         # Convert neighbors to lists for JSON serialization
         # Handle both lists and numpy arrays properly
         if neighbors_A is not None:
@@ -462,7 +467,7 @@ class Manager(object):
                 #if loading fails, skip vertex
                 continue
             task = Task(link, (A, B), self.eps)
-            # task.pathweight is an array, so sum it to get total pathweight
+            # pathweight is the sum of deg_A_v * deg_B_v over all vertices in v2, so we add len(A)*len(B) for this vertex to the total pathweight, and add the number of edges in the link graph to the triangle count
             pathweight += len(task.A) * len(task.B)
             triangle_count += task.edges
 

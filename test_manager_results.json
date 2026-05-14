@@ -10,43 +10,10 @@
       "i1"
     ],
     "num_directions": 3,
-    "time_taken_seconds": 0.35020971298217773,
+    "time_taken_seconds": 69.95973658561707,
     "files_remaining_after_cleanup": 32,
     "success": false,
     "error": "row_order is empty list",
-    "max_depth": 10
-  },
-  {
-    "graph_size": 32,
-    "graph_nodes": 32,
-    "graph_edges": 496,
-    "num_V2_vertices": 32,
-    "directions_considered": [
-      "",
-      "i0",
-      "i1"
-    ],
-    "num_directions": 3,
-    "time_taken_seconds": 8.07109022140503,
-    "files_remaining_after_cleanup": 128,
-    "success": false,
-    "error": "row_order is empty list",
-    "max_depth": 10
-  },
-  {
-    "graph_size": 128,
-    "graph_nodes": 128,
-    "graph_edges": 8128,
-    "num_V2_vertices": 128,
-    "directions_considered": [
-      "",
-      "d0"
-    ],
-    "num_directions": 2,
-    "time_taken_seconds": 390.6927134990692,
-    "files_remaining_after_cleanup": 640,
-    "success": false,
-    "error": "operands could not be broadcast together with shapes (127,) (126,) ",
     "max_depth": 10
   }
 ]
