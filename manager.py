@@ -47,7 +47,7 @@ class FileManager(object):
             mask_B_list = mask_B.tolist() if hasattr(mask_B, 'tolist') else list(mask_B)
         
         #if mask_A or mask_B are all False, we do not need to save anything
-        if not np.any(mask_A) and not np.any(mask_B):
+        if not np.any(mask_A_list) or not np.any(mask_B_list):
             return
 
 
@@ -340,7 +340,13 @@ class Manager(object):
             partition_dict = json.loads(partition_str)
             mask_A = np.array(partition_dict["mask_A"], dtype=bool)
             mask_B = np.array(partition_dict["mask_B"], dtype=bool)
-            
+
+            # if mask_A or mask_B are all False, throw an error, since this should not happen
+            if not np.any(mask_A):
+                raise ValueError(f"mask_A is all False for vertex {vertex} and direction {direction}")
+            if not np.any(mask_B):
+                raise ValueError(f"mask_B is all False for vertex {vertex} and direction {direction}")
+
             neighbors_A_full = self._convert_json_to_nodes(partition_dict["neighbors_A"])
             neighbors_B_full = self._convert_json_to_nodes(partition_dict["neighbors_B"])
             
@@ -354,12 +360,14 @@ class Manager(object):
                 A = [tuple(node) if isinstance(node, (list, np.ndarray)) else node for node in A_filtered]
             else:
                 A = []
+                raise ValueError(f" neighbors_A is empty for vertex {vertex} and direction {direction}")
             
             if len(neighbors_B_array) > 0:
                 B_filtered = neighbors_B_array[mask_B]
                 B = [tuple(node) if isinstance(node, (list, np.ndarray)) else node for node in B_filtered]
             else:
                 B = []
+                raise ValueError(f" neighbors_B is empty for vertex {vertex} and direction {direction}")
             
             return True, (A, B)
         except Exception as e:

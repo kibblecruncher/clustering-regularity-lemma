@@ -7,13 +7,22 @@
     "directions_considered": [
       "",
       "i0",
-      "i1"
+      "i1",
+      "i0i0",
+      "i0i1",
+      "i0i0i0",
+      "i0i0i1",
+      "i0i0i0i0",
+      "i0i0i0i1",
+      "i0i0i0i0i0",
+      "i0i0i0i0i1",
+      "i0i0i0i0i0i0"
     ],
-    "num_directions": 3,
-    "time_taken_seconds": 69.95973658561707,
-    "files_remaining_after_cleanup": 32,
+    "num_directions": 12,
+    "time_taken_seconds": 0.7546498775482178,
+    "files_remaining_after_cleanup": 0,
     "success": false,
-    "error": "row_order is empty list",
+    "error": "Direction code 'i0i0i0i0i0i0' (length 12) exceeds maximum depth 10",
     "max_depth": 10
   }
 ]
