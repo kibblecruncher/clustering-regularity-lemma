@@ -280,6 +280,7 @@ class TestManager(unittest.TestCase):
         self.assertEqual(mgr.eps, self.eps)
         self.assertEqual(mgr.irreg_vtx_threshold, self.eps**5 / 90)
         self.assertEqual(mgr.dev_vtx_threshold, self.eps)
+        self.assertEqual(mgr.dev_split_threshold, self.eps**5)
         self.assertEqual(mgr.irreg_vtx_count_threshold, 0.1)
         self.assertEqual(mgr.dev_threshold, 0.1)
         self.assertEqual(mgr.clustering_threshold, self.eps)

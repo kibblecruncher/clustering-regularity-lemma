@@ -29,6 +29,7 @@ class AlgorithmRunner(object):
         dev_vtx_threshold: float = None,
         irreg_vtx_count_threshold: float = None,
         dev_threshold: float = None,
+        dev_split_threshold: float = None,
         irreg_threshold: float = None,
         clustering_threshold: float = None,
         max_depth: int = float("inf"),
@@ -48,6 +49,7 @@ class AlgorithmRunner(object):
                 dev_vtx_threshold=dev_vtx_threshold,
                 irreg_vtx_count_threshold=irreg_vtx_count_threshold,
                 dev_threshold=dev_threshold,
+                dev_split_threshold=dev_split_threshold,
                 irreg_threshold=irreg_threshold,
                 clustering_threshold=clustering_threshold,
                 max_depth=max_depth,
@@ -59,6 +61,7 @@ class AlgorithmRunner(object):
         self.dev_vtx_threshold = parameters.dev_vtx_threshold
         self.irreg_vtx_count_threshold = parameters.irreg_vtx_count_threshold
         self.dev_threshold = parameters.dev_threshold
+        self.dev_split_threshold = parameters.dev_split_threshold
         self.irreg_threshold = parameters.irreg_threshold
         self.clustering_threshold = parameters.clustering_threshold
         self.max_depth = parameters.max_depth
@@ -157,7 +160,7 @@ class AlgorithmRunner(object):
             if not success or not success_partition:
                 continue
 
-            task = Task(link, (A, B), self.eps)
+            task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
             pathweight += len(task.A) * len(task.B)
             triangle_count += task.edges
 
@@ -186,7 +189,7 @@ class AlgorithmRunner(object):
                     "when setting irregularity partition"
                 )
 
-            task = Task(link, (A, B), self.eps)
+            task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
             irreg_v, _ = task.compute_irregular_vertices(gamma)
             self.partition_manager.savePartition(
                 v, direction + "i0", np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
@@ -209,7 +212,7 @@ class AlgorithmRunner(object):
                     "when setting deviation partition"
                 )
 
-            task = Task(link, (A, B), self.eps)
+            task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
             L, R = task.produce_new_masks(gamma)
             self.partition_manager.savePartition(v, direction + "d0", np.array(L), np.array(R), A, B)
             self.partition_manager.savePartition(v, direction + "d1", ~np.array(L), np.array(R), A, B)
@@ -256,7 +259,7 @@ class AlgorithmRunner(object):
                 if not success_g or not success_p:
                     continue
 
-                task = Task(link, (A, B), self.eps)
+                task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
                 irreg_v, irreg_count = task.compute_irregular_vertices(gamma)
                 dev = task.compute_local_deviation(gamma)
                 if irreg_count > self.irreg_vtx_count_threshold * pathweight:

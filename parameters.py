@@ -11,6 +11,7 @@ class AlgorithmParameters:
     dev_vtx_threshold: Optional[float] = None
     irreg_vtx_count_threshold: Optional[float] = None
     dev_threshold: Optional[float] = None
+    dev_split_threshold: Optional[float] = None
     irreg_threshold: Optional[float] = None
     clustering_threshold: Optional[float] = None
     max_depth: float = float("inf")
@@ -24,6 +25,7 @@ class AlgorithmParameters:
             "dev_vtx_threshold": self.eps,
             "irreg_vtx_count_threshold": 0.1,
             "dev_threshold": 0.1,
+            "dev_split_threshold": self.eps**5,
             "irreg_threshold": self.eps,
             "clustering_threshold": self.eps,
         }

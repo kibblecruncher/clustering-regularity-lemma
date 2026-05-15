@@ -62,6 +62,7 @@ class TestRefactoredDataTypes:
         assert params.dev_vtx_threshold == 0.25
         assert params.irreg_vtx_count_threshold == 0.1
         assert params.dev_threshold == 0.1
+        assert params.dev_split_threshold == 0.25**5
         assert params.irreg_threshold == 0.25
         assert params.clustering_threshold == 0.25
 
@@ -336,6 +337,7 @@ class TestManagerInitialization:
         dev_vtx_thresh = eps
         irreg_count_thresh = 0.1
         dev_thresh = 0.1
+        dev_split_thresh = eps**5
         irreg_thresh = eps
         clust_thresh = eps
         
@@ -346,6 +348,7 @@ class TestManagerInitialization:
             dev_vtx_threshold=dev_vtx_thresh,
             irreg_vtx_count_threshold=irreg_count_thresh,
             dev_threshold=dev_thresh,
+            dev_split_threshold=dev_split_thresh,
             irreg_threshold=irreg_thresh,
             clustering_threshold=clust_thresh,
             max_depth=10
@@ -356,6 +359,7 @@ class TestManagerInitialization:
         assert manager.dev_vtx_threshold == dev_vtx_thresh
         assert manager.irreg_vtx_count_threshold == irreg_count_thresh
         assert manager.dev_threshold == dev_thresh
+        assert manager.dev_split_threshold == dev_split_thresh
         assert manager.irreg_threshold == irreg_thresh
         assert manager.clustering_threshold == clust_thresh
 
