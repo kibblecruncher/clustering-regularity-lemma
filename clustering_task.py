@@ -30,7 +30,7 @@ class Task:
             column_order=self.B
         )
 
-        self.edges = self.G.number_of_edges()
+        self.edges = int(self.M.sum())
 
         self.density = 0.0 if len(self.A) * len(self.B) == 0 else (
             self.edges / (len(self.A) * len(self.B))
