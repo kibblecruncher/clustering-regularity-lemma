@@ -2,6 +2,7 @@
 """Unit tests for manager.py - FileManager and GraphManager classes"""
 
 import importlib.util
+import json
 import os
 import tempfile
 import shutil
@@ -51,20 +52,34 @@ class TestFileManager(unittest.TestCase):
         direction = "up"
         A = np.array([1, 2, 3])
         B = np.array([4, 5, 6])
+        mask_A = np.array([True, False, True])
+        mask_B = np.array([False, True, True])
         
         # Save partition
-        self.file_manager.savePartition(vertex, direction, A, B)
+        self.file_manager.savePartition(vertex, direction, mask_A, mask_B, A, B)
         
         # Load partition
         success, data = self.file_manager.loadPartition(vertex, direction)
         
         self.assertTrue(success)
         self.assertIsNotNone(data)
-        # Data should be JSON string
-        self.assertIn("vtx", data)
-        self.assertIn("dir", data)
-        self.assertIn("A", data)
-        self.assertIn("B", data)
+        partition_dict = json.loads(data)
+        self.assertEqual(set(partition_dict.keys()), {
+            "vtx",
+            "dir",
+            "mask_A",
+            "mask_B",
+            "neighbors_A",
+            "neighbors_B",
+        })
+        self.assertNotIn("A", partition_dict)
+        self.assertNotIn("B", partition_dict)
+        self.assertEqual(partition_dict["vtx"], vertex)
+        self.assertEqual(partition_dict["dir"], direction)
+        self.assertTrue(np.array_equal(np.array(partition_dict["mask_A"], dtype=bool), mask_A))
+        self.assertTrue(np.array_equal(np.array(partition_dict["mask_B"], dtype=bool), mask_B))
+        self.assertTrue(np.array_equal(np.array(partition_dict["neighbors_A"]), A))
+        self.assertTrue(np.array_equal(np.array(partition_dict["neighbors_B"]), B))
     
     def test_load_partition_not_exists(self):
         """Test loadPartition returns False for non-existent file."""
@@ -142,9 +157,7 @@ class TestGraphManager(unittest.TestCase):
         # Should return nodes with part=1 (as integers)
         self.assertEqual(len(V2), len(self.G.nodes()))
         for node in V2:
-            # V2 contains integer node IDs
             self.assertIsInstance(node, int)
-            self.assertEqual(node[1], 1)
     
     def test_make_link_graph(self):
         """Test makeLinkGraph creates correct link graph."""
@@ -160,9 +173,8 @@ class TestGraphManager(unittest.TestCase):
         vertex = 1
         A, B = self.graph_manager.makeLinkPartition(vertex)
         
-        # Should return numpy arrays
-        self.assertIsInstance(A, np.ndarray)
-        self.assertIsInstance(B, np.ndarray)
+        self.assertIsInstance(A, list)
+        self.assertIsInstance(B, list)
         
         # A should contain part=0 nodes, B should contain part=2 nodes
         for node in A:
@@ -200,16 +212,18 @@ class TestFileManagerDeletePartition(unittest.TestCase):
     
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
-    
+
     def test_delete_partition_existing(self):
         """Test deleting an existing partition file."""
         vertex = 10
         direction = "test"
         A = np.array([1, 2, 3])
         B = np.array([4, 5, 6])
+        mask_A = np.ones(len(A), dtype=bool)
+        mask_B = np.ones(len(B), dtype=bool)
         
         # Create and verify partition exists
-        self.file_manager.savePartition(vertex, direction, A, B)
+        self.file_manager.savePartition(vertex, direction, mask_A, mask_B, A, B)
         self.assertTrue(os.path.exists(self.file_manager.partitionFileName(vertex, direction)))
         
         # Delete and verify
@@ -239,94 +253,76 @@ class TestManager(unittest.TestCase):
     
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
+
+    def create_manager(self):
+        Manager = manager_module.Manager
+        return Manager(
+            self.G,
+            self.eps,
+            partition_dir=self.partition_dir,
+            graph_dir=self.graph_dir,
+        )
     
     def test_manager_initialization(self):
         """Test Manager initialization."""
-        # Import Manager class
-        Manager = manager_module.Manager
-        
-        # Create manager with custom directories
-        class CustomFileManager(FileManager):
-            def __init__(self, partition_dir, graph_dir):
-                super().__init__(partition_dir, graph_dir)
-        
-        # We need to patch FileManager before creating Manager
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', CustomFileManager):
-            mgr = Manager(self.G, self.eps)
-            
-            self.assertEqual(mgr.eps, self.eps)
-            self.assertIsInstance(mgr.graph_manager, GraphManager)
-            self.assertIsInstance(mgr.partition_manager, CustomFileManager)
-            self.assertIsNotNone(mgr.q)
-            self.assertGreater(len(mgr.V2), 0)
+        mgr = self.create_manager()
+
+        self.assertEqual(mgr.eps, self.eps)
+        self.assertIsInstance(mgr.graph_manager, GraphManager)
+        self.assertIsInstance(mgr.partition_manager, FileManager)
+        self.assertIsNotNone(mgr.q)
+        self.assertGreater(len(mgr.V2), 0)
     
     def test_manager_parameters(self):
         """Test Manager sets correct parameters."""
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', FileManager):
-            Manager = manager_module.Manager
-            mgr = Manager(self.G, self.eps)
-            
-            # Check threshold parameters are set
-            self.assertEqual(mgr.eps, self.eps)
-            self.assertEqual(mgr.irreg_vtx_threshold, self.eps**5 / 90)
-            self.assertEqual(mgr.dev_vtx_threshold, self.eps)
-            self.assertEqual(mgr.irreg_vtx_count_threshold, 0.1)
-            self.assertEqual(mgr.dev_threshold, 0.1)
-            self.assertEqual(mgr.clustering_threshold, self.eps)
+        mgr = self.create_manager()
+
+        self.assertEqual(mgr.eps, self.eps)
+        self.assertEqual(mgr.irreg_vtx_threshold, self.eps**5 / 90)
+        self.assertEqual(mgr.dev_vtx_threshold, self.eps)
+        self.assertEqual(mgr.irreg_vtx_count_threshold, 0.1)
+        self.assertEqual(mgr.dev_threshold, 0.1)
+        self.assertEqual(mgr.clustering_threshold, self.eps)
     
     def test_manager_saves_initial_partitions(self):
         """Test Manager saves initial partitions for all V2 vertices."""
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', FileManager):
-            Manager = manager_module.Manager
-            mgr = Manager(self.G, self.eps)
-            
-            # Check that partitions were saved for each V2 vertex
-            for v in mgr.V2:
-                success, partition = mgr.partition_manager.loadPartition(v, "")
-                self.assertTrue(success, f"Partition not saved for vertex {v}")
-                
-                success, link = mgr.partition_manager.loadLinkGraph(v)
-                self.assertTrue(success, f"Link graph not saved for vertex {v}")
+        mgr = self.create_manager()
+        mgr._initialize_link_data()
+
+        for v in mgr.V2:
+            success, partition = mgr.partition_manager.loadPartition(v, "")
+            self.assertTrue(success, f"Partition not saved for vertex {v}")
+
+            success, link = mgr.partition_manager.loadLinkGraph(v)
+            self.assertTrue(success, f"Link graph not saved for vertex {v}")
     
     def test_compute_path_data(self):
         """Test compute_path_data method."""
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', FileManager):
-            Manager = manager_module.Manager
-            mgr = Manager(self.G, self.eps)
-            
-            pathweight, triangle_count, gamma = mgr.compute_path_data("")
-            
-            self.assertIsInstance(pathweight, (int, float))
-            self.assertIsInstance(triangle_count, int)
-            self.assertIsInstance(gamma, (int, float))
-            self.assertGreaterEqual(triangle_count, 0)
+        mgr = self.create_manager()
+        mgr._initialize_link_data()
+
+        pathweight, triangle_count, gamma = mgr.compute_path_data("")
+
+        self.assertIsInstance(pathweight, (int, float))
+        self.assertIsInstance(triangle_count, int)
+        self.assertIsInstance(gamma, (int, float))
+        self.assertGreaterEqual(triangle_count, 0)
     
     def test_compute_path_data_empty_dir(self):
         """Test compute_path_data with non-existent directory."""
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', FileManager):
-            Manager = manager_module.Manager
-            mgr = Manager(self.G, self.eps)
-            
-            # Should handle gracefully
-            pathweight, triangle_count, gamma = mgr.compute_path_data("nonexistent")
-            self.assertEqual(pathweight, 0)
-            self.assertEqual(triangle_count, 0)
-            self.assertEqual(gamma, 0.0)
+        mgr = self.create_manager()
+
+        pathweight, triangle_count, gamma = mgr.compute_path_data("nonexistent")
+        self.assertEqual(pathweight, 0)
+        self.assertEqual(triangle_count, 0)
+        self.assertEqual(gamma, 0.0)
     
     def test_iterate_method_exists(self):
         """Test iterate method exists."""
-        import unittest.mock as mock
-        with mock.patch.object(manager_module, 'FileManager', FileManager):
-            Manager = manager_module.Manager
-            mgr = Manager(self.G, self.eps)
-            
-            self.assertTrue(hasattr(mgr, 'iterate'))
-            self.assertTrue(callable(mgr.iterate))
+        mgr = self.create_manager()
+
+        self.assertTrue(hasattr(mgr, 'iterate'))
+        self.assertTrue(callable(mgr.iterate))
 
 
 if __name__ == '__main__':

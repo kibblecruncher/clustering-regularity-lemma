@@ -19,7 +19,7 @@ import networkx as nx
 import numpy as np
 from pathlib import Path
 
-from manager import Manager, FileManager, GraphManager
+from manager import AlgorithmParameters, EdgePartitionAssembler, Manager, FileManager, GraphManager, PartitionRecord
 
 
 @pytest.fixture
@@ -43,6 +43,61 @@ def small_complete_graph():
 def medium_complete_graph():
     """Create a medium complete graph K6."""
     return nx.complete_graph(6)
+
+
+def save_full_partition(file_manager, vertex, direction, neighbors_A, neighbors_B):
+    """Save a partition that marks every provided neighbor."""
+    mask_A = np.ones(len(neighbors_A), dtype=bool)
+    mask_B = np.ones(len(neighbors_B), dtype=bool)
+    file_manager.savePartition(vertex, direction, mask_A, mask_B, neighbors_A, neighbors_B)
+
+
+class TestRefactoredDataTypes:
+    """Tests for explicit refactor data types."""
+
+    def test_algorithm_parameters_defaults(self):
+        params = AlgorithmParameters(eps=0.25)
+
+        assert params.irreg_vtx_threshold == 0.25**5 / 90
+        assert params.dev_vtx_threshold == 0.25
+        assert params.irreg_vtx_count_threshold == 0.1
+        assert params.dev_threshold == 0.1
+        assert params.irreg_threshold == 0.25
+        assert params.clustering_threshold == 0.25
+
+    def test_partition_record_json_round_trip(self):
+        record = PartitionRecord(
+            vertex=7,
+            direction="i0",
+            mask_A=np.array([True, False, True]),
+            mask_B=np.array([False, True]),
+            neighbors_A=[(1, 0), (2, 0), (3, 0)],
+            neighbors_B=[(4, 2), (5, 2)],
+        )
+
+        data = record.to_json_dict()
+        assert set(data) == {"vtx", "dir", "mask_A", "mask_B", "neighbors_A", "neighbors_B"}
+        assert "A" not in data
+        assert "B" not in data
+
+        loaded = PartitionRecord.from_json_dict(data)
+        assert loaded.vertex == record.vertex
+        assert loaded.direction == record.direction
+        assert np.array_equal(loaded.mask_A, record.mask_A)
+        assert np.array_equal(loaded.mask_B, record.mask_B)
+        assert loaded.neighbors_A == record.neighbors_A
+        assert loaded.neighbors_B == record.neighbors_B
+
+    def test_partition_record_rejects_shape_mismatch(self):
+        with pytest.raises(ValueError, match="mask_A length"):
+            PartitionRecord(
+                vertex=0,
+                direction="bad",
+                mask_A=np.array([True, False]),
+                mask_B=np.array([True]),
+                neighbors_A=[(1, 0)],
+                neighbors_B=[(1, 2)],
+            )
 
 
 class TestFileManager:
@@ -73,18 +128,32 @@ class TestFileManager:
         partition_dir, graph_dir = temp_dirs
         fm = FileManager(partition_dir, graph_dir)
         
-        A = np.array([0, 1, 2])
-        B = np.array([3, 4, 5])
+        neighbors_A = np.array([0, 1, 2])
+        neighbors_B = np.array([3, 4, 5])
+        mask_A = np.array([True, False, True])
+        mask_B = np.array([False, True, True])
         
-        fm.savePartition(0, "test", A, B)
+        fm.savePartition(0, "test", mask_A, mask_B, neighbors_A, neighbors_B)
         success, partition_str = fm.loadPartition(0, "test")
         
         assert success is True
         assert partition_str is not None
         
         partition_dict = json.loads(partition_str)
-        assert np.array_equal(np.array(partition_dict["A"]), A)
-        assert np.array_equal(np.array(partition_dict["B"]), B)
+        assert set(partition_dict.keys()) == {
+            "vtx",
+            "dir",
+            "mask_A",
+            "mask_B",
+            "neighbors_A",
+            "neighbors_B",
+        }
+        assert "A" not in partition_dict
+        assert "B" not in partition_dict
+        assert np.array_equal(np.array(partition_dict["mask_A"], dtype=bool), mask_A)
+        assert np.array_equal(np.array(partition_dict["mask_B"], dtype=bool), mask_B)
+        assert np.array_equal(np.array(partition_dict["neighbors_A"]), neighbors_A)
+        assert np.array_equal(np.array(partition_dict["neighbors_B"]), neighbors_B)
 
     def test_load_nonexistent_partition(self, temp_dirs):
         """Test loading a partition that doesn't exist."""
@@ -102,7 +171,7 @@ class TestFileManager:
         
         A = np.array([0, 1])
         B = np.array([2, 3])
-        fm.savePartition(0, "test", A, B)
+        save_full_partition(fm, 0, "test", A, B)
         
         filename = fm.partitionFileName(0, "test")
         assert os.path.exists(filename)
@@ -128,7 +197,7 @@ class TestFileManager:
         
         # Create multiple partitions
         for i in range(3):
-            fm.savePartition(i, f"dir{i}", A, B)
+            save_full_partition(fm, i, f"dir{i}", A, B)
         
         assert len(os.listdir(partition_dir)) == 3
         fm.deleteAllPartitions()
@@ -205,13 +274,13 @@ class TestGraphManager:
         assert link_graph.number_of_nodes() > 0
 
     def test_makeLinkPartition(self, small_complete_graph):
-        """makeLinkPartition should return two non-empty arrays."""
+        """makeLinkPartition should return two non-empty neighbor lists."""
         gm = GraphManager(small_complete_graph)
         V2 = gm.getV2()
         
         A, B = gm.makeLinkPartition(V2[0])
-        assert isinstance(A, np.ndarray)
-        assert isinstance(B, np.ndarray)
+        assert isinstance(A, list)
+        assert isinstance(B, list)
         assert len(A) > 0 and len(B) > 0
 
 
@@ -366,7 +435,7 @@ class TestFileIOCleanup:
         
         for v in manager.V2:
             A, B = manager.graph_manager.makeLinkPartition(v)
-            manager.partition_manager.savePartition(v, "", A, B)
+            save_full_partition(manager.partition_manager, v, "", A, B)
             N = manager.graph_manager.makeLinkGraph(v)
             manager.partition_manager.saveLinkGraph(v, N)
         
@@ -407,7 +476,7 @@ class TestFileIOCleanup:
             manager.V2 = manager.graph_manager.getV2()
             for v in manager.V2:
                 A, B = manager.graph_manager.makeLinkPartition(v)
-                manager.partition_manager.savePartition(v, "", A, B)
+                save_full_partition(manager.partition_manager, v, "", A, B)
                 N = manager.graph_manager.makeLinkGraph(v)
                 manager.partition_manager.saveLinkGraph(v, N)
             
@@ -506,6 +575,22 @@ class TestPartitionLabels:
 class TestBitmaskDisjointness:
     """Tests for verifying that assembled partitions produce disjoint bitmasks."""
 
+    def test_edge_partition_assembler_maps_local_masks(self, small_complete_graph):
+        """Local neighbor masks should map to global E12 and E23 masks."""
+        gm = GraphManager(small_complete_graph)
+        assembler = EdgePartitionAssembler(gm)
+        v = gm.getV2()[0]
+        A, B = gm.makeLinkPartition(v)
+
+        mask_A = np.array([True] + [False] * (len(A) - 1), dtype=bool)
+        mask_B = np.array([True] + [False] * (len(B) - 1), dtype=bool)
+        E12_contrib, E23_contrib = assembler.map_vertex_partition_to_edges(v, mask_A, mask_B, A, B)
+
+        assert E12_contrib.dtype == bool
+        assert E23_contrib.dtype == bool
+        assert np.sum(E12_contrib) == 1
+        assert np.sum(E23_contrib) == 1
+
     def test_assemble_partition_consistency(self, small_complete_graph):
         """assemble_partition should return consistent arrays."""
         partition_dir = tempfile.mkdtemp(prefix="test_assemble_")
@@ -528,7 +613,7 @@ class TestBitmaskDisjointness:
             # Create some simple partitions
             for v in manager.V2:
                 A, B = manager.graph_manager.makeLinkPartition(v)
-                manager.partition_manager.savePartition(v, "test", A, B)
+                save_full_partition(manager.partition_manager, v, "test", A, B)
             
             # Assemble and check consistency
             part_A, part_B = manager.assemble_partition("test")
@@ -541,6 +626,32 @@ class TestBitmaskDisjointness:
         finally:
             shutil.rmtree(partition_dir, ignore_errors=True)
             shutil.rmtree(graph_dir, ignore_errors=True)
+
+    def test_manager_run_on_small_graph_with_temp_storage(self, temp_dirs):
+        """Manager.run should produce labels and clean temporary storage."""
+        partition_dir, graph_dir = temp_dirs
+        manager = Manager(
+            G=nx.complete_graph(3),
+            eps=0.5,
+            irreg_vtx_threshold=0.5**5 / 90,
+            dev_vtx_threshold=0.5,
+            irreg_vtx_count_threshold=0.1,
+            dev_threshold=0.1,
+            irreg_threshold=0.5,
+            clustering_threshold=2.0,
+            partition_dir=partition_dir,
+            graph_dir=graph_dir,
+            max_depth=5,
+        )
+
+        labels_A, labels_B = manager.run()
+
+        assert isinstance(labels_A, np.ndarray)
+        assert isinstance(labels_B, np.ndarray)
+        assert len(labels_A) > 0
+        assert len(labels_B) > 0
+        assert os.listdir(partition_dir) == []
+        assert os.listdir(graph_dir) == []
 
 
 class TestEdgeCases:

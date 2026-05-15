@@ -130,17 +130,17 @@ class TestProduceNewMasks(unittest.TestCase):
         self.task = Task(self.G, self.partition, self.eps)
 
     def test_produce_new_masks_returns_tuple(self):
-        """Test that produce_new_masks returns a tuple of tuples."""
+        """Test that produce_new_masks returns local A and B masks."""
         gamma = 0.5
         result = self.task.produce_new_masks(gamma)
         
         self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 3)
-        
-        # Each element should be a tuple of two arrays
-        for inner in result:
-            self.assertIsInstance(inner, tuple)
-            self.assertEqual(len(inner), 2)
+        self.assertEqual(len(result), 2)
+        L_v, mask_B = result
+        self.assertIsInstance(L_v, np.ndarray)
+        self.assertIsInstance(mask_B, np.ndarray)
+        self.assertEqual(L_v.shape[0], len(self.task.A))
+        self.assertEqual(mask_B.shape[0], len(self.task.B))
 
     def test_produce_new_masks_sets_attributes(self):
         """Test that produce_new_masks sets required attributes."""
@@ -148,8 +148,7 @@ class TestProduceNewMasks(unittest.TestCase):
         self.task.produce_new_masks(gamma)
         
         self.assertIsNotNone(self.task.local_dev)
-        self.assertIsNotNone(self.task.big_irreg_set)
-        self.assertIsNotNone(self.task.total_irreg)
+        self.assertIsNotNone(self.task.spec_dev_matrix)
 
 
 class TestEdgeCases(unittest.TestCase):

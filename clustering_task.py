@@ -62,7 +62,10 @@ class Task:
         row = np.asarray(self.spec_dev_matrix[u_star, :]).ravel()
         L_v = row > delta
 
-        mask_B = (np.asarray(self.M.getrow(u_star).todense()).ravel() > 0).astype(int)
+        matrix_row = self.M[u_star, :]
+        if hasattr(matrix_row, "toarray"):
+            matrix_row = matrix_row.toarray()
+        mask_B = (np.asarray(matrix_row).ravel() > 0).astype(int)
 
         return (L_v, mask_B)
         
