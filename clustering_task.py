@@ -59,8 +59,13 @@ class Task:
         expected = gamma * deg_B_v
         threshold = self.irreg_vtx_threshold * deg_B_v
 
-        irregular = np.abs(self.deg_A_v - expected) > threshold
-        return irregular, np.sum(irregular)
+        #irregular = np.abs(self.deg_A_v - expected) > threshold
+        #return irregular, np.sum(irregular)
+
+        positive = self.deg_A_v - expected > threshold
+        negative = self.deg_A_v - expected < -threshold
+
+        return positive, np.sum(positive), negative, np.sum(negative)
 
     def produce_new_masks(self, gamma)-> tuple[np.array, np.array]: 
         self.local_dev = self.compute_local_deviation(gamma)

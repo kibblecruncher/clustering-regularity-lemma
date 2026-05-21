@@ -245,7 +245,9 @@ class AlgorithmRunner(object):
                 )
 
             task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
-            irreg_v, _ = task.compute_irregular_vertices(gamma)
+            pos_v, pos_score, neg_v, neg_score = task.compute_irregular_vertices(gamma)
+            irreg_v = pos_v if pos_score > neg_score else neg_v
+            #irreg_v, _ = task.compute_irregular_vertices(gamma)
             self.partition_manager.savePartition(
                 v, direction + "i0", np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
             )
@@ -308,6 +310,11 @@ class AlgorithmRunner(object):
             dev_vertices = np.array([False] * len(self.V2))
             irreg_vertices = np.array([False] * len(self.V2))
 
+            pos_weight = 0.0
+            neg_weight = 0.0
+            pos_vertices = np.array([False] * len(self.V2))
+            neg_vertices = np.array([False] * len(self.V2))
+
             for i, v in enumerate(self.V2):
                 success_g, link = self.partition_manager.loadLinkGraph(v)
                 success_p, (A, B) = self._load_partition_with_mask(v, direction)
@@ -315,11 +322,21 @@ class AlgorithmRunner(object):
                     continue
 
                 task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
-                irreg_v, irreg_count = task.compute_irregular_vertices(gamma)
+                #irreg_v, irreg_count = task.compute_irregular_vertices(gamma)
                 dev = task.compute_local_deviation(gamma)
+                pos_v, pos_count, neg_v, neg_count = task.compute_irregular_vertices(gamma)
+                irreg_count = pos_count + neg_count
+
                 if irreg_count > self.irreg_vtx_count_threshold * len(task.A):
-                    irreg_vertices[i] = True
+                    irreg_vertices[i] = True # keeping this arond just in case
                     irreg_weight += np.sum(irreg_v * task.pathweight)
+                    if pos_count > neg_count:
+                        pos_vertices[i] = True
+                        pos_weight += np.sum(pos_v * task.pathweight)
+                    else:
+                        neg_vertices[i] = True
+                        neg_weight += np.sum(neg_v * task.pathweight)
+                    
                 elif dev > self.dev_vtx_threshold * len(task.A)**2 * len(task.B):
                     dev_vertices[i] = True
                     dev_weight += np.sum(task.pathweight)
