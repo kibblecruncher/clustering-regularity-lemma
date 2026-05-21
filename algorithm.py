@@ -317,10 +317,10 @@ class AlgorithmRunner(object):
                 task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
                 irreg_v, irreg_count = task.compute_irregular_vertices(gamma)
                 dev = task.compute_local_deviation(gamma)
-                if irreg_count > self.irreg_vtx_count_threshold * pathweight:
+                if irreg_count > self.irreg_vtx_count_threshold * len(task.A):
                     irreg_vertices[i] = True
                     irreg_weight += np.sum(irreg_v * task.pathweight)
-                elif dev > self.dev_vtx_threshold:
+                elif dev > self.dev_vtx_threshold * len(task.A)**2 * len(task.B):
                     dev_vertices[i] = True
                     dev_weight += np.sum(task.pathweight)
 
