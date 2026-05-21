@@ -43,8 +43,13 @@ class TestFileManager(unittest.TestCase):
     def test_partition_file_name(self):
         """Test partitionFileName generates correct path."""
         filename = self.file_manager.partitionFileName(42, "down")
-        expected = os.path.join(self.partition_dir, "partition_42_down.json")
-        self.assertEqual(filename, expected)
+        basename = os.path.basename(filename)
+
+        self.assertEqual(os.path.dirname(filename), self.partition_dir)
+        self.assertTrue(basename.startswith("partition_42_"))
+        self.assertTrue(basename.endswith(".json"))
+        self.assertNotIn("down", basename)
+        self.assertEqual(len(basename), len("partition_42_") + 16 + len(".json"))
     
     def test_save_and_load_partition(self):
         """Test savePartition and loadPartition work correctly."""
@@ -279,10 +284,10 @@ class TestManager(unittest.TestCase):
 
         self.assertEqual(mgr.eps, self.eps)
         self.assertEqual(mgr.irreg_vtx_threshold, self.eps**5 / 90)
-        self.assertEqual(mgr.dev_vtx_threshold, self.eps)
+        self.assertEqual(mgr.dev_vtx_threshold, self.eps**2 / 9)
         self.assertEqual(mgr.dev_split_threshold, self.eps**5)
-        self.assertEqual(mgr.irreg_vtx_count_threshold, 0.1)
-        self.assertEqual(mgr.dev_threshold, 0.1)
+        self.assertEqual(mgr.irreg_vtx_count_threshold, self.eps**(5/2) / 9)
+        self.assertEqual(mgr.dev_threshold, 2 * self.eps**2 / 5)
         self.assertEqual(mgr.clustering_threshold, self.eps)
     
     def test_manager_saves_initial_partitions(self):

@@ -1,4 +1,5 @@
-from typing import Any, List, Tuple
+from dataclasses import replace
+from typing import Any, List, Optional, Tuple
 import json
 import queue as q
 
@@ -21,6 +22,58 @@ class AlgorithmRunner(object):
     def _convert_json_to_nodes(json_list: List) -> List:
         return convert_json_to_nodes(json_list)
 
+    @staticmethod
+    def _resolve_parameters(
+        parameters: Optional[AlgorithmParameters],
+        eps: float,
+        irreg_vtx_threshold: float,
+        dev_vtx_threshold: float,
+        irreg_vtx_count_threshold: float,
+        dev_threshold: float,
+        dev_split_threshold: float,
+        irreg_threshold: float,
+        clustering_threshold: float,
+        max_depth: float,
+    ) -> AlgorithmParameters:
+        """Build the effective parameter set from defaults and explicit overrides."""
+        if parameters is None:
+            if eps is None:
+                raise ValueError("eps is required when parameters is not provided")
+            return AlgorithmParameters(
+                eps=eps,
+                irreg_vtx_threshold=irreg_vtx_threshold,
+                dev_vtx_threshold=dev_vtx_threshold,
+                irreg_vtx_count_threshold=irreg_vtx_count_threshold,
+                dev_threshold=dev_threshold,
+                dev_split_threshold=dev_split_threshold,
+                irreg_threshold=irreg_threshold,
+                clustering_threshold=clustering_threshold,
+                max_depth=max_depth,
+            )
+
+        if eps is not None and eps != parameters.eps:
+            raise ValueError("conflicting eps values provided by eps and parameters")
+
+        overrides = {}
+        for name, value in (
+            ("irreg_vtx_threshold", irreg_vtx_threshold),
+            ("dev_vtx_threshold", dev_vtx_threshold),
+            ("irreg_vtx_count_threshold", irreg_vtx_count_threshold),
+            ("dev_threshold", dev_threshold),
+            ("dev_split_threshold", dev_split_threshold),
+            ("irreg_threshold", irreg_threshold),
+            ("clustering_threshold", clustering_threshold),
+        ):
+            if value is not None:
+                overrides[name] = value
+
+        if max_depth != float("inf"):
+            overrides["max_depth"] = max_depth
+
+        if not overrides:
+            return parameters
+        return replace(parameters, **overrides)
+
     def __init__(
         self,
         G: nx.Graph,
@@ -40,20 +93,18 @@ class AlgorithmRunner(object):
         parameters: AlgorithmParameters = None,
         file_manager_cls=FileManager,
     ) -> None:
-        if parameters is None:
-            if eps is None:
-                raise ValueError("eps is required when parameters is not provided")
-            parameters = AlgorithmParameters(
-                eps=eps,
-                irreg_vtx_threshold=irreg_vtx_threshold,
-                dev_vtx_threshold=dev_vtx_threshold,
-                irreg_vtx_count_threshold=irreg_vtx_count_threshold,
-                dev_threshold=dev_threshold,
-                dev_split_threshold=dev_split_threshold,
-                irreg_threshold=irreg_threshold,
-                clustering_threshold=clustering_threshold,
-                max_depth=max_depth,
-            )
+        parameters = self._resolve_parameters(
+            parameters,
+            eps,
+            irreg_vtx_threshold,
+            dev_vtx_threshold,
+            irreg_vtx_count_threshold,
+            dev_threshold,
+            dev_split_threshold,
+            irreg_threshold,
+            clustering_threshold,
+            max_depth,
+        )
 
         self.parameters = parameters
         self.eps = parameters.eps
@@ -166,6 +217,10 @@ class AlgorithmRunner(object):
 
         gamma = 0.0 if pathweight == 0 else triangle_count / pathweight
         return pathweight, triangle_count, gamma
+
+    def compute_graph_data(self, dir: str) -> Tuple[int, int, float]:
+        """Compatibility alias for compute_path_data."""
+        return self.compute_path_data(dir)
 
     def _base_stats(self, direction: str, pathweight: float, triangle_count: float, gamma: float):
         return PartitionStats(

@@ -19,6 +19,7 @@ import networkx as nx
 import numpy as np
 from pathlib import Path
 
+from algorithm import AlgorithmRunner
 from manager import AlgorithmParameters, EdgePartitionAssembler, Manager, FileManager, GraphManager, PartitionRecord
 
 
@@ -59,11 +60,11 @@ class TestRefactoredDataTypes:
         params = AlgorithmParameters(eps=0.25)
 
         assert params.irreg_vtx_threshold == 0.25**5 / 90
-        assert params.dev_vtx_threshold == 0.25
-        assert params.irreg_vtx_count_threshold == 0.1
-        assert params.dev_threshold == 0.1
+        assert params.dev_vtx_threshold == 0.25**2 / 9
+        assert params.irreg_vtx_count_threshold == 0.25**(5/2) / 9
+        assert params.dev_threshold == 2 * 0.25**2 / 5
         assert params.dev_split_threshold == 0.25**5
-        assert params.irreg_threshold == 0.25
+        assert params.irreg_threshold == 2 * 0.25**(5/2) / 5
         assert params.clustering_threshold == 0.25
 
     def test_partition_record_json_round_trip(self):
@@ -121,8 +122,71 @@ class TestFileManager:
         fm = FileManager(partition_dir, graph_dir)
         
         filename = fm.partitionFileName(5, "i0")
-        assert "partition_5_i0.json" in filename
-        assert partition_dir in filename
+        basename = Path(filename).name
+        assert Path(filename).parent == Path(partition_dir)
+        assert basename.startswith("partition_5_")
+        assert basename.endswith(".json")
+        assert "i0" not in basename
+        assert len(basename) == len("partition_5_") + 16 + len(".json")
+
+    def test_long_direction_filename_is_bounded(self, temp_dirs):
+        """Long direction codes should not be embedded in partition filenames."""
+        partition_dir, graph_dir = temp_dirs
+        fm = FileManager(partition_dir, graph_dir)
+        direction = "i0" * 200
+
+        filename = fm.partitionFileName(12, direction)
+        basename = Path(filename).name
+
+        assert Path(filename).parent == Path(partition_dir)
+        assert basename.startswith("partition_12_")
+        assert basename.endswith(".json")
+        assert direction not in basename
+        assert len(basename) == len("partition_12_") + 16 + len(".json")
+
+    def test_long_direction_round_trip_preserves_json_direction(self, temp_dirs):
+        """Hashed filenames should not truncate the persisted direction value."""
+        partition_dir, graph_dir = temp_dirs
+        fm = FileManager(partition_dir, graph_dir)
+        direction = "d3i1" * 100
+        neighbors_A = np.array([0, 1])
+        neighbors_B = np.array([2, 3])
+        mask_A = np.array([True, False])
+        mask_B = np.array([False, True])
+
+        fm.savePartition(7, direction, mask_A, mask_B, neighbors_A, neighbors_B)
+        success, partition_str = fm.loadPartition(7, direction)
+
+        assert success is True
+        partition_dict = json.loads(partition_str)
+        assert partition_dict["dir"] == direction
+        assert np.array_equal(np.array(partition_dict["mask_A"], dtype=bool), mask_A)
+        assert np.array_equal(np.array(partition_dict["mask_B"], dtype=bool), mask_B)
+
+    def test_different_directions_get_different_filenames(self, temp_dirs):
+        """Direction hashes should distinguish partitions for the same vertex."""
+        partition_dir, graph_dir = temp_dirs
+        fm = FileManager(partition_dir, graph_dir)
+
+        first = fm.partitionFileName(3, "i0")
+        second = fm.partitionFileName(3, "i1")
+
+        assert first != second
+
+    def test_delete_partition_with_long_direction(self, temp_dirs):
+        """deletePartition should use the same direction hash as savePartition."""
+        partition_dir, graph_dir = temp_dirs
+        fm = FileManager(partition_dir, graph_dir)
+        direction = "i0d1" * 100
+        A = np.array([0, 1])
+        B = np.array([2, 3])
+
+        save_full_partition(fm, 4, direction, A, B)
+        filename = fm.partitionFileName(4, direction)
+        assert os.path.exists(filename)
+
+        fm.deletePartition(4, direction)
+        assert not os.path.exists(filename)
 
     def test_save_and_load_partition(self, temp_dirs):
         """Test saving and loading partitions."""
@@ -328,6 +392,55 @@ class TestManagerInitialization:
         
         assert manager.max_depth == float('inf')
 
+    def test_algorithm_runner_overrides_max_depth_when_parameters_are_supplied(self, small_complete_graph, temp_dirs):
+        """Explicit max_depth should override the value on a supplied parameter object."""
+        partition_dir, graph_dir = temp_dirs
+        params = AlgorithmParameters(eps=0.25)
+
+        runner = AlgorithmRunner(
+            small_complete_graph,
+            parameters=params,
+            max_depth=7,
+            partition_dir=partition_dir,
+            graph_dir=graph_dir,
+        )
+
+        assert runner.max_depth == 7
+        assert runner.parameters.max_depth == 7
+
+    def test_algorithm_runner_overrides_thresholds_when_parameters_are_supplied(self, small_complete_graph, temp_dirs):
+        """Explicit threshold arguments should override supplied parameter values."""
+        partition_dir, graph_dir = temp_dirs
+        params = AlgorithmParameters(eps=0.25)
+
+        runner = AlgorithmRunner(
+            small_complete_graph,
+            parameters=params,
+            irreg_vtx_threshold=0.11,
+            dev_threshold=0.22,
+            dev_split_threshold=0.33,
+            partition_dir=partition_dir,
+            graph_dir=graph_dir,
+        )
+
+        assert runner.irreg_vtx_threshold == 0.11
+        assert runner.dev_threshold == 0.22
+        assert runner.dev_split_threshold == 0.33
+
+    def test_algorithm_runner_rejects_conflicting_eps_when_parameters_are_supplied(self, small_complete_graph, temp_dirs):
+        """The runner should not silently merge parameter objects with a different eps."""
+        partition_dir, graph_dir = temp_dirs
+        params = AlgorithmParameters(eps=0.25)
+
+        with pytest.raises(ValueError, match="conflicting eps"):
+            AlgorithmRunner(
+                small_complete_graph,
+                eps=0.5,
+                parameters=params,
+                partition_dir=partition_dir,
+                graph_dir=graph_dir,
+            )
+
     def test_manager_stores_hyperparameters(self, small_complete_graph, temp_dirs):
         """Manager should store all hyperparameters."""
         partition_dir, graph_dir = temp_dirs
@@ -430,7 +543,9 @@ class TestFileIOCleanup:
             irreg_vtx_count_threshold=0.1,
             dev_threshold=0.1,
             irreg_threshold=0.5,
-            clustering_threshold=0.5
+            clustering_threshold=0.5,
+            partition_dir=partition_dir,
+            graph_dir=graph_dir,
         )
         
         manager.V2 = manager.graph_manager.getV2()
@@ -457,11 +572,9 @@ class TestFileIOCleanup:
         assert len(os.listdir(manager.partition_manager.target_dir)) == 0
         assert len(os.listdir(manager.partition_manager.graph_dir)) == 0
 
-    def test_max_depth_ensures_full_cleanup(self, small_complete_graph):
+    def test_max_depth_ensures_full_cleanup(self, small_complete_graph, temp_dirs):
         """When max_depth is exceeded, all files should be cleaned up."""
-        # Use the actual partition/graph directories that Manager creates
-        partition_dir = "partitions"
-        graph_dir = "graphs"
+        partition_dir, graph_dir = temp_dirs
         
         try:
             manager = Manager(
@@ -473,6 +586,8 @@ class TestFileIOCleanup:
                 dev_threshold=0.1,
                 irreg_threshold=0.5,
                 clustering_threshold=0.5,
+                partition_dir=partition_dir,
+                graph_dir=graph_dir,
                 max_depth=0  # Set max_depth to 0 so even empty direction "" will fail
             )
             
@@ -609,7 +724,9 @@ class TestBitmaskDisjointness:
                 irreg_vtx_count_threshold=0.1,
                 dev_threshold=0.1,
                 irreg_threshold=0.5,
-                clustering_threshold=0.5
+                clustering_threshold=0.5,
+                partition_dir=partition_dir,
+                graph_dir=graph_dir,
             )
             
             manager.V2 = manager.graph_manager.getV2()
