@@ -100,7 +100,7 @@ def test_compute_graph_data_empty_graph(tmp_path):
     manager = manager_for_graph(nx.empty_graph(8), tmp_path)
     save_masked_direction(manager, "full", full_masks)
 
-    pathweight, triangle_count, gamma = manager.compute_graph_data("full")
+    pathweight, triangle_count, gamma = manager.compute_path_data("full")
 
     assert pathweight == 0
     assert triangle_count == 0
@@ -113,7 +113,7 @@ def test_compute_graph_data_complete_graph_full_masks_has_expected_values(tmp_pa
     manager = manager_for_graph(graph, tmp_path)
     save_masked_direction(manager, "full", full_masks)
 
-    pathweight, triangle_count, gamma = manager.compute_graph_data("full")
+    pathweight, triangle_count, gamma = manager.compute_path_data("full")
 
     assert pathweight == n * (n - 1) ** 2
     assert triangle_count == n * (n - 1) * (n - 2)
@@ -140,7 +140,7 @@ def test_compute_graph_data_complete_graph_with_varying_masks(tmp_path):
         )
         assert pathweight == triangle_count + diagonal_count
         assert open_count == 0
-        assert manager.compute_graph_data(direction) == (pathweight, triangle_count, gamma)
+        assert manager.compute_path_data(direction) == (pathweight, triangle_count, gamma)
 
 
 def test_compute_graph_data_random_graph_gamma_tracks_edge_density_full_masks(tmp_path):
@@ -150,7 +150,7 @@ def test_compute_graph_data_random_graph_gamma_tracks_edge_density_full_masks(tm
     manager = manager_for_graph(graph, tmp_path)
     save_masked_direction(manager, "full", full_masks)
 
-    pathweight, triangle_count, gamma = manager.compute_graph_data("full")
+    pathweight, triangle_count, gamma = manager.compute_path_data("full")
 
     assert pathweight > 0
     assert triangle_count > 0
@@ -174,5 +174,5 @@ def test_compute_graph_data_random_graph_with_varying_masks(tmp_path):
             direction,
         )
         assert pathweight == triangle_count + diagonal_count + open_count
-        assert manager.compute_graph_data(direction) == (pathweight, triangle_count, gamma)
+        assert manager.compute_path_data(direction) == (pathweight, triangle_count, gamma)
         assert 0.0 <= gamma <= 1.0

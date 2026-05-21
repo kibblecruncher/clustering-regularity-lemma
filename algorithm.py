@@ -167,10 +167,6 @@ class AlgorithmRunner(object):
         gamma = 0.0 if pathweight == 0 else triangle_count / pathweight
         return pathweight, triangle_count, gamma
 
-    def compute_graph_data(self, dir: str) -> Tuple[int, int, float]:
-        """Compatibility alias for graph-level pathweight, triangle count, and gamma."""
-        return self.compute_path_data(dir)
-
     def _base_stats(self, direction: str, pathweight: float, triangle_count: float, gamma: float):
         return PartitionStats(
             direction=direction,
