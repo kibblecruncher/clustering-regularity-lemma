@@ -92,11 +92,16 @@ class AssemblePartitionTester:
             print(f"  A_bitmask: {A_bitmask}")
             print(f"  B_bitmask: {B_bitmask}")
             
-            # Save as partition - convert to numpy arrays, then get neighbors as lists for JSON
-            # But actually, we want to save the neighbors themselves (the node identifiers)
             A_neighbors_array = np.array(A_neighbors)
             B_neighbors_array = np.array(B_neighbors)
-            self.fm.savePartition(v, direction, A_neighbors_array, B_neighbors_array)
+            self.fm.savePartition(
+                v,
+                direction,
+                A_bitmask,
+                B_bitmask,
+                A_neighbors_array,
+                B_neighbors_array,
+            )
 
 
 def test_assemble_partition_k3_manual():

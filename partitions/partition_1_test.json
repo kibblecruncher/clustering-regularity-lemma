@@ -1,1 +1,1 @@
-{"vtx": 1, "dir": "test", "mask_A": [[0, 0], [2, 0], [3, 0]], "mask_B": [[0, 2], [2, 2], [3, 2]], "neighbors_A": null, "neighbors_B": null}
+{"vtx": 1, "dir": "test", "mask_A": [1, 1, 1], "mask_B": [1, 1, 1], "neighbors_A": [[0, 0], [2, 0], [3, 0]], "neighbors_B": [[0, 2], [2, 2], [3, 2]]}

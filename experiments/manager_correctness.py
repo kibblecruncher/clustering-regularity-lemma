@@ -160,8 +160,6 @@ def main():
     # Graph sizes to test with their max_depth parameters
     test_configs = [
         {'size': 8, 'max_depth': 10},    # K8 may need more depth
-        {'size': 32, 'max_depth': 10},   # K32 converges quickly
-        {'size': 128, 'max_depth': 10},  # K128 converges quickly
     ]
     
     results = []

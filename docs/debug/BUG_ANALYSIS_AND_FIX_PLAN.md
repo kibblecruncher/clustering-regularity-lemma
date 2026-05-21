@@ -192,10 +192,12 @@ Currently:
     for v in self.V2:
         success, partition_str = partition_manager.loadPartition(v, dir)
         partition_dict = json.loads(partition_str)
-        A = np.array(partition_dict["A"])  # These are NODE IDENTIFIERS
-        B = np.array(partition_dict["B"])  # These are NODE IDENTIFIERS
-        part_A_iter.append(A)
-        part_B_iter.append(B)
+        mask_A = np.array(partition_dict["mask_A"], dtype=bool)
+        mask_B = np.array(partition_dict["mask_B"], dtype=bool)
+        neighbors_A = partition_dict["neighbors_A"]
+        neighbors_B = partition_dict["neighbors_B"]
+        part_A_iter.append(neighbors_A)
+        part_B_iter.append(neighbors_B)
     
     part_A = np.concatenate(part_A_iter)  # Concatenate node lists!
     part_B = np.concatenate(part_B_iter)
