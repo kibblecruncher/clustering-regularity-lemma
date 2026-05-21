@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from typing import List, Tuple
@@ -17,9 +18,15 @@ class FileManager(object):
         os.makedirs(graph_dir, exist_ok=True)
         self.graph_dir = graph_dir
 
+    @staticmethod
+    def _direction_key(direction: str) -> str:
+        """Return a bounded stable key for direction-dependent partition filenames."""
+        return hashlib.sha1(direction.encode("utf-8")).hexdigest()[:16]
+
     def partitionFileName(self, vertex: int, direction: str) -> str:
-        """Generates a file name for the given vertex, direction, and step."""
-        return os.path.join(self.target_dir, f"partition_{vertex}_{direction}.json")
+        """Generates a bounded file name for the given vertex and direction."""
+        direction_key = self._direction_key(direction)
+        return os.path.join(self.target_dir, f"partition_{vertex}_{direction_key}.json")
 
     def savePartition(
         self,

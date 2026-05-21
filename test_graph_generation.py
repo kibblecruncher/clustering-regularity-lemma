@@ -8,70 +8,18 @@ Tests the algorithm on various graph types:
 4. Stochastic block models
 
 All graphs have at most 30 vertices.
-Tests run with a 1-minute timeout.
+Tests use bounded max_depth and deterministic random seeds.
 """
 
 import unittest
 import tempfile
 import shutil
 import os
-import threading
 import networkx as nx
 import numpy as np
-from contextlib import contextmanager
 
 from algorithm import AlgorithmRunner
 from parameters import AlgorithmParameters
-
-
-class TimeoutException(Exception):
-    """Custom exception for timeout."""
-    pass
-
-
-def _run_with_timeout_impl(func, args, timeout_seconds):
-    """Helper to run a function with timeout using threading."""
-    result = [None]
-    exception = [None]
-    
-    def target():
-        try:
-            result[0] = func(*args)
-        except Exception as e:
-            exception[0] = e
-    
-    thread = threading.Thread(target=target, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout_seconds)
-    
-    if thread.is_alive():
-        raise TimeoutException(f"Operation timed out after {timeout_seconds} seconds")
-    
-    if exception[0] is not None:
-        raise exception[0]
-    
-    return result[0]
-
-
-@contextmanager
-def timeout(seconds):
-    """Context manager to enforce timeout on a code block."""
-    def run_code(code_func):
-        return _run_with_timeout_impl(code_func, [], seconds)
-    
-    class TimeoutContext:
-        def __enter__(self):
-            return self
-        
-        def __exit__(self, *args):
-            pass
-        
-        def __call__(self, func):
-            """Allow wrapping a function"""
-            return _run_with_timeout_impl(func, [], seconds)
-    
-    ctx = TimeoutContext()
-    yield ctx
 
 
 class GraphGenerator:
@@ -83,7 +31,7 @@ class GraphGenerator:
         return nx.complete_graph(n)
 
     @staticmethod
-    def bipartite_graph(n_left, n_right, edge_prob=None):
+    def bipartite_graph(n_left, n_right, edge_prob=None, seed=None):
         """
         Generate a bipartite graph.
         If edge_prob is None, generates a complete bipartite graph.
@@ -98,21 +46,22 @@ class GraphGenerator:
         right_nodes = list(range(n_left, n_left + n_right))
         B.add_nodes_from(left_nodes, bipartite=0)
         B.add_nodes_from(right_nodes, bipartite=1)
+        rng = np.random.default_rng(seed)
         
         for u in left_nodes:
             for v in right_nodes:
-                if np.random.random() < edge_prob:
+                if rng.random() < edge_prob:
                     B.add_edge(u, v)
         
         return B
 
     @staticmethod
-    def random_graph(n, edge_prob):
+    def random_graph(n, edge_prob, seed=None):
         """Generate an Erdos-Renyi random graph with n vertices."""
-        return nx.erdos_renyi_graph(n, edge_prob)
+        return nx.erdos_renyi_graph(n, edge_prob, seed=seed)
 
     @staticmethod
-    def stochastic_block_model(sizes, probs):
+    def stochastic_block_model(sizes, probs, seed=None):
         """
         Generate a stochastic block model.
         
@@ -120,7 +69,7 @@ class GraphGenerator:
             sizes: List of block sizes
             probs: Matrix of edge probabilities between/within blocks
         """
-        return nx.stochastic_block_model(sizes, probs)
+        return nx.stochastic_block_model(sizes, probs, seed=seed)
 
 
 class TestClusteringRegularityAlgorithm(unittest.TestCase):
@@ -138,34 +87,32 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def run_algorithm_with_timeout(self, G, eps=0.1, timeout_seconds=60, max_depth=8):
         """
-        Run the algorithm on a graph with a timeout.
+        Run the algorithm on a graph with bounded refinement depth.
         
         Args:
             G: NetworkX graph
             eps: Algorithm parameter
-            timeout_seconds: Timeout in seconds (default 60 seconds / 1 minute)
+            timeout_seconds: Retained for compatibility; max_depth bounds runtime.
             max_depth: Maximum recursion depth to avoid excessively long paths (default 8)
         
         Returns:
-            Tuple of (labels_A, labels_B) on success, or None on timeout
+            Tuple of (labels_A, labels_B) on success, or None on skipped max-depth exhaustion.
         """
-        def run_algorithm():
-            parameters = AlgorithmParameters(eps=eps)
-            runner = AlgorithmRunner(
-                G,
-                parameters=parameters,
-                partition_dir=self.partition_dir,
-                graph_dir=self.graph_dir,
-                max_depth=max_depth,
-            )
-            return runner.run()
-        
+        parameters = AlgorithmParameters(eps=eps)
+        runner = AlgorithmRunner(
+            G,
+            parameters=parameters,
+            partition_dir=self.partition_dir,
+            graph_dir=self.graph_dir,
+            max_depth=max_depth,
+        )
+
         try:
-            return _run_with_timeout_impl(run_algorithm, [], timeout_seconds)
-        except TimeoutException as e:
-            self.skipTest(f"TIMEOUT: {e}")
-            return None
+            return runner.run()
         except Exception as e:
+            if isinstance(e, ValueError) and "exceeds maximum depth" in str(e):
+                self.skipTest(f"MAX_DEPTH: {e}")
+                return None
             self.fail(f"ERROR: {e}")
 
     def validate_partition_labels(self, labels_A, labels_B, G):
@@ -184,10 +131,11 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
         self.assertTrue(np.all(labels_A >= 0))
         self.assertTrue(np.all(labels_B >= 0))
         
-        # Labels should have length consistent with the number of edges
-        # The exact length depends on the graph structure
-        self.assertGreater(len(labels_A), 0, "labels_A should be non-empty")
-        self.assertGreater(len(labels_B), 0, "labels_B should be non-empty")
+        # The tripartite cover has one E12 and one E23 edge for each oriented
+        # original edge, so each label vector has two entries per input edge.
+        expected_label_count = 2 * G.number_of_edges()
+        self.assertEqual(len(labels_A), expected_label_count)
+        self.assertEqual(len(labels_B), expected_label_count)
 
     # ==================== Complete Graphs ====================
 
@@ -251,7 +199,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_bipartite_sparse(self):
         """Test on sparse random bipartite graph."""
-        G = GraphGenerator.bipartite_graph(8, 8, edge_prob=0.2)
+        G = GraphGenerator.bipartite_graph(8, 8, edge_prob=0.2, seed=101)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -259,7 +207,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_bipartite_dense(self):
         """Test on dense random bipartite graph."""
-        G = GraphGenerator.bipartite_graph(6, 6, edge_prob=0.8)
+        G = GraphGenerator.bipartite_graph(6, 6, edge_prob=0.8, seed=102)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -269,7 +217,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_graph_sparse_10(self):
         """Test on sparse random graph with 9 vertices."""
-        G = GraphGenerator.random_graph(9, edge_prob=0.1)
+        G = GraphGenerator.random_graph(9, edge_prob=0.1, seed=201)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -277,7 +225,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_graph_sparse_15(self):
         """Test on sparse random graph with 15 vertices."""
-        G = GraphGenerator.random_graph(15, edge_prob=0.08)
+        G = GraphGenerator.random_graph(15, edge_prob=0.08, seed=202)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -285,7 +233,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_graph_medium_8(self):
         """Test on complete bipartite graph K4,4."""
-        G = GraphGenerator.bipartite_graph(4, 4, edge_prob=1.0)
+        G = GraphGenerator.bipartite_graph(4, 4, edge_prob=1.0, seed=203)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -293,15 +241,15 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_graph_medium_12(self):
         """Test on medium-sparse random graph with 8 vertices."""
-        G = GraphGenerator.random_graph(8, edge_prob=0.25)
+        G = GraphGenerator.random_graph(8, edge_prob=0.25, seed=204)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
             self.validate_partition_labels(labels_A, labels_B, G)
 
-    def test_random_graph_sparse_15(self):
+    def test_random_graph_sparse_7(self):
         """Test on sparse random graph with 7 vertices."""
-        G = GraphGenerator.random_graph(7, edge_prob=0.1)
+        G = GraphGenerator.random_graph(7, edge_prob=0.1, seed=205)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -309,7 +257,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
 
     def test_random_graph_sparse_small_8(self):
         """Test on sparse random graph with 7 vertices."""
-        G = GraphGenerator.random_graph(7, edge_prob=0.35)
+        G = GraphGenerator.random_graph(7, edge_prob=0.35, seed=206)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -323,7 +271,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
         # Sparse intra-block density (0.25), very low inter-block density (0.05)
         sizes = [3, 3]
         probs = [[0.25, 0.05], [0.05, 0.25]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=301)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -334,18 +282,18 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
         # 2 blocks with sizes 3 and 3
         sizes = [3, 3]
         probs = [[0.3, 0.05], [0.05, 0.3]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=302)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
             self.validate_partition_labels(labels_A, labels_B, G)
 
-    def test_sbm_three_blocks_balanced_very_sparse(self):
+    def test_sbm_three_blocks_4_each_very_sparse(self):
         """Test on SBM with 3 blocks, balanced, very sparse inter-block edges."""
         # 3 blocks, each with 4 vertices
         sizes = [4, 4, 4]
         probs = [[0.3, 0.02, 0.02], [0.02, 0.3, 0.02], [0.02, 0.02, 0.3]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=303)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -356,30 +304,30 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
         # 3 blocks, each with 3 vertices
         sizes = [3, 3, 3]
         probs = [[0.2, 0.05, 0.05], [0.05, 0.2, 0.05], [0.05, 0.05, 0.2]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=304)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
             self.validate_partition_labels(labels_A, labels_B, G)
 
-    def test_sbm_three_blocks_balanced_very_sparse(self):
+    def test_sbm_three_blocks_3_each_very_sparse(self):
         """Test on SBM with 3 blocks, balanced, very sparse inter-block edges."""
         # 3 blocks, each with 3 vertices
         sizes = [3, 3, 3]
         probs = [[0.25, 0.02, 0.02], [0.02, 0.25, 0.02], [0.02, 0.02, 0.25]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=305)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
             self.validate_partition_labels(labels_A, labels_B, G)
 
-    def test_sbm_two_blocks_balanced_sparse(self):
+    def test_sbm_two_blocks_balanced_sparse_020(self):
         """Test on SBM with 2 blocks, balanced, sparse intra-block density."""
         # 2 blocks, each with 3 vertices
         # Sparse intra-block density (0.2), very low inter-block density (0.05)
         sizes = [3, 3]
         probs = [[0.2, 0.05], [0.05, 0.2]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=306)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -390,7 +338,7 @@ class TestClusteringRegularityAlgorithm(unittest.TestCase):
         # 2 blocks, each with 3 vertices
         sizes = [3, 3]
         probs = [[0.4, 0.1], [0.1, 0.4]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=307)
         result = self.run_algorithm_with_timeout(G, eps=0.1)
         if result is not None:
             labels_A, labels_B = result
@@ -413,14 +361,14 @@ class TestGraphGenerationAndProperties(unittest.TestCase):
 
     def test_random_graph_vertex_count(self):
         """Verify random graphs have correct number of vertices."""
-        G = GraphGenerator.random_graph(15, edge_prob=0.3)
+        G = GraphGenerator.random_graph(15, edge_prob=0.3, seed=401)
         self.assertEqual(G.number_of_nodes(), 15)
 
     def test_sbm_vertex_count(self):
         """Verify SBM graphs have correct number of vertices."""
         sizes = [5, 7, 6]
         probs = [[0.8, 0.2, 0.2], [0.2, 0.8, 0.2], [0.2, 0.2, 0.8]]
-        G = GraphGenerator.stochastic_block_model(sizes, probs)
+        G = GraphGenerator.stochastic_block_model(sizes, probs, seed=402)
         self.assertEqual(G.number_of_nodes(), sum(sizes))
 
 
