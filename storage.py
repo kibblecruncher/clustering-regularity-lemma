@@ -88,7 +88,13 @@ class FileManager(object):
 
     def saveLinkGraph(self, vertex: int, G: nx.Graph) -> None:
         """Saves the link graph to disk."""
-        json_data = nx.node_link_data(G, edges="links")
+        # Use compatible parameter name for node_link_data
+        try:
+            # Try newer version of NetworkX with 'edges' parameter
+            json_data = nx.node_link_data(G, edges="links")
+        except TypeError:
+            # Fall back to older version without 'edges' parameter
+            json_data = nx.node_link_data(G)
         with open(self.graphFileName(vertex), "w", encoding="utf-8") as f:
             json.dump(json_data, f)
 
@@ -100,4 +106,9 @@ class FileManager(object):
         except OSError:
             return False, None
         else:
-            return True, nx.node_link_graph(data, edges="links")
+            try:
+                # Try newer version of NetworkX with 'edges' parameter
+                return True, nx.node_link_graph(data, edges="links")
+            except TypeError:
+                # Fall back to older version without 'edges' parameter
+                return True, nx.node_link_graph(data)
