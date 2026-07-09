@@ -231,9 +231,9 @@ class AlgorithmRunner(object):
             clustering_threshold=self.clustering_threshold,
         )
 
-    def _save_irregular_splits(self, direction: str, gamma: float, irreg_vertices: np.ndarray) -> None:
+    def _save_irregular_splits(self, direction: str, gamma: float, bad_vertices: np.ndarray, pos: bool) -> None:
         for i, v in enumerate(self.V2):
-            if not irreg_vertices[i]:
+            if not bad_vertices[i]:
                 continue
 
             success_g, link = self.partition_manager.loadLinkGraph(v)
@@ -246,14 +246,15 @@ class AlgorithmRunner(object):
 
             task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
             pos_v, pos_score, neg_v, neg_score = task.compute_irregular_vertices(gamma)
-            irreg_v = pos_v if pos_score > neg_score else neg_v
-            #irreg_v, _ = task.compute_irregular_vertices(gamma)
-            self.partition_manager.savePartition(
-                v, direction + "i0", np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
-            )
-            self.partition_manager.savePartition(
-                v, direction + "i1", ~np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
-            )
+            irreg_v = pos_v if pos else neg_v
+            if any(np.array(irreg_v)):
+                self.partition_manager.savePartition(
+                    v, direction + "i0", np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
+                )
+            if any(~np.array(irreg_v)):
+                self.partition_manager.savePartition(
+                    v, direction + "i1", ~np.array(irreg_v), np.ones(len(B), dtype=bool), A, B
+                )
             self.partition_manager.deletePartition(v, direction)
 
     def _save_deviation_splits(self, direction: str, gamma: float, dev_vertices: np.ndarray) -> None:
@@ -271,10 +272,15 @@ class AlgorithmRunner(object):
 
             task = Task(link, (A, B), self.eps, self.irreg_vtx_threshold, self.dev_vtx_threshold, self.dev_split_threshold)
             L, R = task.produce_new_masks(gamma)
-            self.partition_manager.savePartition(v, direction + "d0", np.array(L), np.array(R), A, B)
-            self.partition_manager.savePartition(v, direction + "d1", ~np.array(L), np.array(R), A, B)
-            self.partition_manager.savePartition(v, direction + "d2", np.array(L), ~np.array(R), A, B)
-            self.partition_manager.savePartition(v, direction + "d3", ~np.array(L), ~np.array(R), A, B)
+            if any(np.array(L)) and any(np.array(R)):
+                self.partition_manager.savePartition(v, direction + "d0", np.array(L), np.array(R), A, B)
+            if any(~np.array(L)) and any(np.array(R)):
+                self.partition_manager.savePartition(v, direction + "d1", ~np.array(L), np.array(R), A, B)
+            if any(np.array(L)) and any(~np.array(R)):
+                self.partition_manager.savePartition(v, direction + "d2", np.array(L), ~np.array(R), A, B)
+            if any(~np.array(L)) and any(~np.array(R)):
+                self.partition_manager.savePartition(v, direction + "d3", ~np.array(L), ~np.array(R), A, B)
+
             self.partition_manager.deletePartition(v, direction)
 
     def iterate(self) -> List[str]:
@@ -329,7 +335,7 @@ class AlgorithmRunner(object):
 
                 if irreg_count > self.irreg_vtx_count_threshold * len(task.A):
                     irreg_vertices[i] = True # keeping this arond just in case
-                    irreg_weight += np.sum(irreg_v * task.pathweight)
+                    irreg_weight += np.sum(task.pathweight)
                     if pos_count > neg_count:
                         pos_vertices[i] = True
                         pos_weight += np.sum(pos_v * task.pathweight)
@@ -346,12 +352,14 @@ class AlgorithmRunner(object):
             stats.irreg_threshold = self.irreg_threshold * pathweight
             stats.dev_threshold = self.dev_threshold * pathweight
 
+            bad_vertices = pos_vertices if pos_weight > neg_weight else neg_vertices
+
             if irreg_weight > self.irreg_threshold * pathweight:
                 stats.failure_reason = "FAILED_IRREGULARITY_CHECK"
                 self.partition_logs.append(stats.to_dict())
                 self.q.put(direction + "i0")
                 self.q.put(direction + "i1")
-                self._save_irregular_splits(direction, gamma, irreg_vertices)
+                self._save_irregular_splits(direction, gamma, bad_vertices, pos_weight > neg_weight)
             elif dev_weight > self.dev_threshold * pathweight:
                 stats.failure_reason = "FAILED_DEVIATION_CHECK"
                 self.partition_logs.append(stats.to_dict())
